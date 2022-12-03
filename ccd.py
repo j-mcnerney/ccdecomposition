@@ -264,18 +264,20 @@ class CostModel:
     def display_data(self):
         """Display a table of symbol data in each period."""     
         #print('Num. time periods: ' + str(self._n_timeperiods))
-        styled_df = self._data.style.set_caption('Period data').set_table_styles(self._styles)
+        styled_df = self._data
+        #styled_df = self._data.style.set_caption('Period data').set_table_styles(self._styles)
         display(styled_df)
 
     def display_contributions(self):
         """Display a table of cost change contributions from each variable over each time span."""
         #print('Num. time spans: ' + str(self._n_timespans))
         styled_df = self._DeltaCost.drop(columns=self._parameters)
-        styled_df = styled_df.style.set_caption('Cost change contributions').set_table_styles(self._styles)
+        #styled_df = styled_df.style.set_caption('Cost change contributions').set_table_styles(self._styles)
         display(styled_df)
 
     def display_change_data(self):
         """Display additional auxilliary quantities used to compute cost change contributions."""
         #print('Num. time spans: ' + str(self._n_timespans))
-        styled_df = self._aux_change_data.style.set_caption('Auxiliary change data').set_table_styles(self._styles)
+        styled_df = self._aux_change_data
+        #styled_df = self._aux_change_data.style.set_caption('Auxiliary change data').set_table_styles(self._styles)
         display(styled_df)
