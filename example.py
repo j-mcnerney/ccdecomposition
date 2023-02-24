@@ -5,7 +5,7 @@ An example of use of the CostProblem class using an interactive .py script.
 
 import numpy as np
 import pandas as pd
-from ccd import CostModel
+from ccdecomp import CostModel
 
 #%% 1: Specify the cost problem
 
