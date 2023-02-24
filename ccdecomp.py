@@ -13,6 +13,8 @@ class CostModel:
 
     A cost model object is a holder for information about a cost change decomposition problem.  It consists of an mathematical equation that represents the cost model, data to populate the model, a variety of other calculated quantities, and meta data about the problem.
     """    
+    
+    # todo: split up representative cost components and log changes into different tables
 
     def __init__(self, equation: str, title: str = 'Cost model'):
         """Cost model object for performing cost change decomposition.
@@ -52,27 +54,11 @@ class CostModel:
         """        
         
         self.title = title
+        self._equation = self._regularize_equation(equation)
+        self._cost_component_terms = self._parse_cost_components()
+        self._n_components = len(self._cost_component_terms)
 
-        # Parse equation string
-
-        # First regularize the string
-        equation = equation.replace('*', ' ')
-        equation = equation.strip()
-        equation = re.sub(' +',' ',equation)  # replace multiple spaces with just one
-        self._equation = equation
-
-        # Separate additive cost terms
-        cost_component_terms = self._equation.split('+')
-        cost_component_terms = [term.strip() for term in cost_component_terms]
-        self._cost_component_terms = cost_component_terms
-        self._n_components = len(cost_component_terms)
-
-        # Gather a list of all equation symbols (variables and parameters)
-        symbols = []
-        for term in self._cost_component_terms:
-            new_symbols = term.split(' ')
-            symbols = symbols + new_symbols
-        symbols = unique(symbols)
+        symbols = self._gather_symbols()
         self._symbols = symbols
         self._n_symbols = len(symbols)
 
@@ -82,7 +68,7 @@ class CostModel:
         self._parameters = []
         self._n_parameters = 0
 
-        # Give cost components (default) names
+        # Give cost components default names
         self._cost_component_names = ['C'+str(i+1) for i in range(4)]
 
         # Compute matrix of dependencies of cost components on symbols
@@ -96,6 +82,26 @@ class CostModel:
         self._styles = [ dict(selector='caption', props=[('text-align', 'left'),('font-weight', 'bold'), ('text-decoration','underline')]) ]
 
 
+    def _regularize_equation(self, equation):
+        equation = (equation
+                    .replace('*', ' ')
+                    .strip())
+        equation = re.sub(' +',' ',equation)  # replace multiple spaces with just one
+        return equation
+
+    def _parse_cost_components(self):
+        cost_component_terms = self._equation.split('+')
+        cost_component_terms = [term.strip() for term in cost_component_terms]
+        return cost_component_terms
+
+    def _gather_symbols(self):
+        symbols = []
+        for term in self._cost_component_terms:
+            new_symbols = term.split(' ')
+            symbols = symbols + new_symbols
+        symbols = unique(symbols)
+        return symbols
+    
     def __str__(self):
         S = '\n'.join((
             'Title:                ' + self.title,
