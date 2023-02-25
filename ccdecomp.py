@@ -14,8 +14,6 @@ class CostModel:
     A cost model object is a holder for information about a cost change decomposition problem.  It consists of an mathematical equation that represents the cost model, data to populate the model, a variety of other calculated quantities, and meta data about the problem.
     """    
     
-    # todo: split up representative cost components and log changes into different tables
-    # todo: do we do checks that parameters stay the same in all periods, as promised?
 
     def __init__(self, equation: str, title: str = 'Cost model'):
         """Cost model object for performing cost change decomposition.
@@ -217,11 +215,6 @@ class CostModel:
             t2 = span[1]
             span_strings = span_strings + [str(t1) + '-' + str(t2)]
 
-        # Create a table to store cost change contributions
-        col_names = ['Total','Sum_of_changes(vars)'] + self._cost_component_names + self._variables
-        self._DeltaCost = pd.DataFrame(index=span_strings, columns=col_names)
-        self._DeltaCost.index.name = 'Time span'
-
         # Create a table to store representative cost components
         self._representative_costs = pd.DataFrame(index=span_strings, columns=self._cost_component_names)
         self._representative_costs.index.name = 'Time span'
@@ -229,6 +222,11 @@ class CostModel:
         # Create a table to store variable changes
         self._variable_changes = pd.DataFrame(index=span_strings, columns=self._variables)
         self._variable_changes.index.name = 'Time span'
+
+        # Create a table to store cost change contributions
+        col_names = ['Total','Sum_of_changes(vars)'] + self._cost_component_names + self._variables
+        self._DeltaCost = pd.DataFrame(index=span_strings, columns=col_names)
+        self._DeltaCost.index.name = 'Time span'
 
         # Compute representative cost components and cost change contributions
         self._DeltaC_matrix_over_time = []
@@ -275,17 +273,16 @@ class CostModel:
 
     def display_data(self):
         """Display a table of symbol data in each period."""     
-        styled_df = self._data
-        display(styled_df)
+        display(self._data)
 
     def display_contributions(self):
         """Display a table of cost change contributions from each variable over each time span."""
-        styled_df = self._DeltaCost.drop(columns=self._parameters)
-        display(styled_df)
+        display(self._DeltaCost.drop(columns=self._parameters))
 
     def display_change_data(self):
-        """Display additional auxilliary quantities used to compute cost change contributions."""
+        """Display representatitive costs over each time space."""
         display(self._representative_costs)
         
     def display_log_changes(self):
-        display(self._variable_changes)
+        """Display log changes in variables over each time span."""
+        display(self._variable_changes.drop(columns=self._parameters))
