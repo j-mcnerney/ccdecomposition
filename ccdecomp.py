@@ -268,21 +268,18 @@ class CostModel:
             # Re-compute total cost change from the variable contributions as a check
             self._DeltaCost.loc[span_string, 'Sum_of_changes(vars)'] = self._DeltaCost.loc[span_string, self._symbols].sum()
 
-
-    pd.set_option('display.precision', 3)
-
-    def display_data(self):
-        """Display a table of symbol data in each period."""     
-        display(self._data)
-
-    def display_contributions(self):
-        """Display a table of cost change contributions from each variable over each time span."""
-        display(self._DeltaCost.drop(columns=self._parameters))
-
-    def display_change_data(self):
-        """Display representatitive costs over each time space."""
-        display(self._representative_costs)
-        
-    def display_log_changes(self):
-        """Display log changes in variables over each time span."""
-        display(self._variable_changes.drop(columns=self._parameters))
+    @property
+    def data(self):
+        return self._data
+    
+    @property
+    def representative_costs(self):
+        return self._representative_costs
+    
+    @property
+    def variable_changes(self):
+        return self._variable_changes.drop(columns=self._parameters)
+    
+    @property
+    def cost_change_contributions(self):
+        return self._DeltaCost.drop(columns=self._parameters)
