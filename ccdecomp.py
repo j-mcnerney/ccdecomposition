@@ -6,7 +6,11 @@ from typing import List
 
 def logmean(C1,C2):    
     import numpy as np
-    return (C2-C1) / (np.log(C2) - np.log(C1))
+    if C1 == C2:
+        lm = C1
+    else:
+        lm = (C2-C1) / (np.log(C2) - np.log(C1))
+    return lm
 
 class CostModel:
     """Cost model object for performing cost change decomposition.
@@ -68,13 +72,13 @@ class CostModel:
         self._n_parameters = 0
 
         # Give cost components default names
-        self._cost_component_names = ['C'+str(i+1) for i in range(4)]
+        self._cost_component_names = ['C'+str(i+1) for i in range(self._n_components)]
 
         # Compute matrix of dependencies of cost components on symbols
         self._dependency_matrix = self._construct_dependency_matrix()
 
         # Specify styles for display methods
-        self._styles = [ dict(selector='caption', props=[('text-align', 'left'),('font-weight', 'bold'), ('text-decoration','underline')]) ]
+        # self._styles = [ dict(selector='caption', props=[('text-align', 'left'),('font-weight', 'bold'), ('text-decoration','underline')]) ]
 
 
     def _regularize_equation(self, equation):
