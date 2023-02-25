@@ -15,6 +15,7 @@ class CostModel:
     """    
     
     # todo: split up representative cost components and log changes into different tables
+    # todo: do we do checks that parameters stay the same in all periods, as promised?
 
     def __init__(self, equation: str, title: str = 'Cost model'):
         """Cost model object for performing cost change decomposition.
@@ -55,8 +56,8 @@ class CostModel:
         
         self.title = title
         self._equation = self._regularize_equation(equation)
-        self._cost_component_terms = self._parse_cost_components()
-        self._n_components = len(self._cost_component_terms)
+        self._cost_component_exprs = self._parse_cost_components()
+        self._n_components = len(self._cost_component_exprs)
 
         symbols = self._gather_symbols()
         self._symbols = symbols
@@ -72,11 +73,7 @@ class CostModel:
         self._cost_component_names = ['C'+str(i+1) for i in range(4)]
 
         # Compute matrix of dependencies of cost components on symbols
-        dependency_matrix = np.zeros((self._n_components, self._n_symbols))
-        for i, term in enumerate(self._cost_component_terms):
-            factors = term.split(' ')
-            dependency_matrix[i,:] = np.isin(symbols, factors)
-        self._dependency_matrix = dependency_matrix
+        self._dependency_matrix = self._construct_dependency_matrix()
 
         # Specify styles for display methods
         self._styles = [ dict(selector='caption', props=[('text-align', 'left'),('font-weight', 'bold'), ('text-decoration','underline')]) ]
@@ -84,8 +81,9 @@ class CostModel:
 
     def _regularize_equation(self, equation):
         equation = (equation
+                    .strip()
                     .replace('*', ' ')
-                    .strip())
+                    .replace('+', ' + '))
         equation = re.sub(' +',' ',equation)  # replace multiple spaces with just one
         return equation
 
@@ -96,53 +94,60 @@ class CostModel:
 
     def _gather_symbols(self):
         symbols = []
-        for term in self._cost_component_terms:
+        for term in self._cost_component_exprs:
             new_symbols = term.split(' ')
             symbols = symbols + new_symbols
         symbols = unique(symbols)
         return symbols
     
+    def _construct_dependency_matrix(self):
+        dependency_matrix = np.zeros((self._n_components, self._n_symbols))
+        for i, term in enumerate(self._cost_component_exprs):
+            factors = term.split(' ')
+            dependency_matrix[i,:] = np.isin(self._symbols, factors)
+        return dependency_matrix
+    
     def __str__(self):
         S = '\n'.join((
-            'Title:                ' + self.title,
-            'Equation:             ' + self._equation,
-            'Cost comp. names:     ' + str(self._cost_component_names),
-            'Cost components:      ' + str(self._cost_component_terms),
-            'Symbols:              ' + str(self._symbols),
-            'Variables:            ' + str(self._variables),
-            'Parameters:           ' + str(self._parameters),
-            'Num. cost components: ' + str(self._n_components),
-            'Num. symbols:         ' + str(self._n_symbols),
-            'Num. variables:       ' + str(self._n_variables),
-            'Num. parameters:      ' + str(self._n_parameters),
+            'Title:                  ' + self.title,
+            'Equation:               ' + self._equation,
+            'Cost comp. names:       ' + str(self._cost_component_names),
+            'Cost comp. expressions: ' + str(self._cost_component_exprs),
+            'Symbols:                ' + str(self._symbols),
+            'Variables:              ' + str(self._variables),
+            'Parameters:             ' + str(self._parameters),
+            'Num. cost components:   ' + str(self._n_components),
+            'Num. symbols:           ' + str(self._n_symbols),
+            'Num. variables:         ' + str(self._n_variables),
+            'Num. parameters:        ' + str(self._n_parameters),
             'Dependency matrix: \n' + str(self._dependency_matrix)
             ))
         return S
 
-
     def name_cost_components(self, names: List[str]):        
         """Override default names of cost components.
 
-        A convenience function.  Assigning meaningful names to the cost components can improve the readability of tables that return results, which use these names.
+        The tables that return change decomposition results use these cost components names, so assigning meaningful names can make these results more readable.
 
         Parameters
         ----------
         names : List[str]
-            Preferred names for the additive terms (cost components) of the cost model.
+            Names of the additive terms (cost components) of the cost model.
         """
         self._cost_component_names = names
 
-
     def identify_parameters(self, parameters: List[str]):
-        """Specify symbols of the cost model that represent fixed parameters.
+        """Specify which symbols of the cost model represent fixed parameters.
 
-        A convenience function.  Specifying which symbols are fixed parameters is not required to compute cost change contributions, and internally, all symbols (parameters and variables) are handled as variables,          with parameters being variables that stay the same in all periods.  However, specifying which symbols are parameters has the following benefits:
+        Specifying the fixed parameters of the model is not required to compute cost change contributions, but has several benefits:
          
-             *The cost change contributions of parameters (which are zero) are removed from output.
+             *The cost change contributions of parameters (which are zero since they do not change) are removed from output.
          
              *If data values of parameters were provided previously, then checks are performed that the values of parameters are the same in all periods.
          
              *If data values of parameters were not provided yet, then they can be entered using this function.
+
+        Internally, all symbols (parameters and variables) are handled as variables, with parameters being variables that stay the same in all periods.
 
         Parameters
         ----------
@@ -177,7 +182,7 @@ class CostModel:
         """Uses input data to compute cost components in each period."""
 
         # Calculate cost components for all time periods
-        for i,term in enumerate(self._cost_component_terms):
+        for i,term in enumerate(self._cost_component_exprs):
             factors = term.split(' ')
             cost_component_value = self._data[factors].product(axis=1)
             cost_component_name = self._cost_component_names[i]
@@ -212,17 +217,18 @@ class CostModel:
             t2 = span[1]
             span_strings = span_strings + [str(t1) + '-' + str(t2)]
 
-        # Create a table to store representative cost components
-        representative_cost_names = [name + '_rep' for name in self._cost_component_names]
-        var_change_names = ['Dlog_' + name for name in self._symbols]
-        col_names = representative_cost_names + var_change_names
-        self._aux_change_data = pd.DataFrame(index=span_strings, columns=col_names)
-        self._aux_change_data.index.name = 'Time span'
-
         # Create a table to store cost change contributions
         col_names = ['Total','Sum_of_changes(vars)'] + self._cost_component_names + self._variables
         self._DeltaCost = pd.DataFrame(index=span_strings, columns=col_names)
         self._DeltaCost.index.name = 'Time span'
+
+        # Create a table to store representative cost components
+        self._representative_costs = pd.DataFrame(index=span_strings, columns=self._cost_component_names)
+        self._representative_costs.index.name = 'Time span'
+
+        # Create a table to store variable changes
+        self._variable_changes = pd.DataFrame(index=span_strings, columns=self._variables)
+        self._variable_changes.index.name = 'Time span'
 
         # Compute representative cost components and cost change contributions
         self._DeltaC_matrix_over_time = []
@@ -240,18 +246,18 @@ class CostModel:
             for ccname in self._cost_component_names:
                 C1 = self._data.loc[t1,ccname]
                 C2 = self._data.loc[t2,ccname]
-                self._aux_change_data.loc[span_string, ccname+'_rep'] = logmean(C1,C2)
+                self._representative_costs.loc[span_string, ccname] = logmean(C1,C2)
                 self._DeltaCost.loc[span_string,ccname] = C2 - C1
 
             # Compute log changes to each equation variable during this span
             for vname in self._symbols:
                 v1 = self._data.loc[t1,vname]
                 v2 = self._data.loc[t2,vname]
-                self._aux_change_data.loc[span_string, 'Dlog_'+vname] = np.log(v2/v1)
+                self._variable_changes.loc[span_string, vname] = np.log(v2/v1)
                 
             # Compute the contribution of each variable to each cost component
-            Cvec          = self._aux_change_data.loc[span_string, representative_cost_names]
-            Dlog_var_vec  = self._aux_change_data.loc[span_string, var_change_names]
+            Cvec          = self._representative_costs.loc[span_string, self._cost_component_names]
+            Dlog_var_vec  = self._variable_changes.loc[span_string, self._symbols]
             Cdiag         = np.diag(Cvec)
             Dlog_var_diag = np.diag(Dlog_var_vec)
             D             = np.array(self._dependency_matrix)
@@ -269,21 +275,17 @@ class CostModel:
 
     def display_data(self):
         """Display a table of symbol data in each period."""     
-        #print('Num. time periods: ' + str(self._n_timeperiods))
         styled_df = self._data
-        #styled_df = self._data.style.set_caption('Period data').set_table_styles(self._styles)
         display(styled_df)
 
     def display_contributions(self):
         """Display a table of cost change contributions from each variable over each time span."""
-        #print('Num. time spans: ' + str(self._n_timespans))
         styled_df = self._DeltaCost.drop(columns=self._parameters)
-        #styled_df = styled_df.style.set_caption('Cost change contributions').set_table_styles(self._styles)
         display(styled_df)
 
     def display_change_data(self):
         """Display additional auxilliary quantities used to compute cost change contributions."""
-        #print('Num. time spans: ' + str(self._n_timespans))
-        styled_df = self._aux_change_data
-        #styled_df = self._aux_change_data.style.set_caption('Auxiliary change data').set_table_styles(self._styles)
-        display(styled_df)
+        display(self._representative_costs)
+        
+    def display_log_changes(self):
+        display(self._variable_changes)
