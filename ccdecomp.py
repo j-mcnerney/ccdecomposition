@@ -4,25 +4,44 @@ import pandas as pd
 from utils import unique, setdiff
 from typing import List
 
-def logmean(C1,C2):    
+# For debugging # todo: make this a snippet
+from pandas_utils import snoop
+snoop2 = lambda x,**kwargs: snoop(x,globals(),**kwargs)
+
+
+def log_mean(C1,C2):
+    """Compute the logarithmic mean of C1 and C2"""
     import numpy as np
     if C1 == C2:
         lm = C1
+    elif C1 == 0 or C2 == 0:
+        lm = 0
     else:
         lm = (C2-C1) / (np.log(C2) - np.log(C1))
     return lm
 
+def log_change(x1,x2):
+    if x1 == 0:
+        lc = np.inf
+    elif x2 == 0:
+        lc = -np.inf
+    else:
+        lc = np.log(x2) - np.log(x1)
+    return lc
+
+
+
 class CostModel:
     """Cost model object for performing cost change decomposition.
 
-    A cost model object is a holder for information about a cost change decomposition problem.  It consists of an mathematical equation that represents the cost model, data to populate the model, a variety of other calculated quantities, and meta data about the problem.
+    The CostModel object holds all information relevant to a cost change decomposition problem.  Its most important attributes are an equation that represents the cost model and data to populate this model. Additional inforomation can be provided to add meta data about the problem and enhance the readability of the results.
     """    
     
 
     def __init__(self, equation: str, title: str = 'Cost model'):
         """Cost model object for performing cost change decomposition.
 
-        A cost model object is a holder for information about a cost change decomposition problem.  It consists of an mathematical equation that represents the cost model, data to populate the model, a variety of other calculated quantities, and meta data about the problem.
+        The CostModel object holds all information relevant to a cost change decomposition problem.  Its most important attributes are an equation that represents the cost model and data to populate this model. Additional inforomation can be provided to add meta data about the problem and enhance the readability of the results.
 
         Parameters
         ----------
@@ -60,12 +79,11 @@ class CostModel:
         self._equation = self._regularize_equation(equation)
         self._cost_component_exprs = self._parse_cost_components()
         self._n_components = len(self._cost_component_exprs)
-
         symbols = self._gather_symbols()
         self._symbols = symbols
         self._n_symbols = len(symbols)
 
-        # Until told otherwise, assume all symbols are variables, not parameters
+        # Assume all symbols are variables, not parameters, until told otherwise
         self._variables = symbols
         self._n_variables = len(symbols)
         self._parameters = []
@@ -176,28 +194,40 @@ class CostModel:
         assert isinstance(data, pd.DataFrame)
         self._data = data.copy()
         self._data.index.name = 'Time period'
+        self._data = self._compute_cost_components(self._data)
         self._n_timeperiods = data.shape[0]
-        self._compute_cost_components()
 
 
-    def _compute_cost_components(self):
+    def _replace_zero_var_values(self):
+        mod_data = self._data.copy()
+        tiny = 1e-7
+        for var in self._variables:
+            min_positive_value = self._data.loc[:,var].where(lambda s:s>0).min()
+            mod_data.loc[:,var] = (self._data.loc[:,var]
+                .mask(lambda s: s==0, other=min_positive_value * tiny))
+        return mod_data
+
+
+    def _compute_cost_components(self, data: pd.DataFrame):
         """Uses input data to compute cost components in each period."""
+
+        mod_data = data.copy()
 
         # Calculate cost components for all time periods
         for i,term in enumerate(self._cost_component_exprs):
             factors = term.split(' ')
-            cost_component_value = self._data[factors].product(axis=1)
+            cost_component_value = mod_data[factors].product(axis=1)
             cost_component_name = self._cost_component_names[i]
-            self._data[cost_component_name] = cost_component_value
+            mod_data[cost_component_name] = cost_component_value
 
         # Calculate total cost
-        self._data['Total_cost'] = self._data[self._cost_component_names].sum(axis=1)
+        mod_data['Total_cost'] = mod_data[self._cost_component_names].sum(axis=1)
 
         # Calculate cost shares
-        for ccname in self._cost_component_names:
-            sharename = 'Share_' + ccname
-            self._data[sharename] = self._data[ccname] / self._data['Total_cost']
-
+        for cc_name in self._cost_component_names:
+            sharename = 'Share_' + cc_name
+            mod_data[sharename] = mod_data[cc_name] / mod_data['Total_cost']
+        return mod_data
 
     def cost_change_decomposition(self, time_spans):
         """Compute cost change contributions over one more spans of time.
@@ -212,6 +242,10 @@ class CostModel:
 
         self._n_timespans = len(time_spans)
 
+        # Replace variables that are zero with tiny values for purpose of calculating contributions
+        mod_data = self._replace_zero_var_values()
+        mod_data = self._compute_cost_components(mod_data)
+
         # Convert time span tuples to strings
         span_strings = []
         for span in time_spans:
@@ -219,15 +253,13 @@ class CostModel:
             t2 = span[1]
             span_strings = span_strings + [str(t1) + '-' + str(t2)]
 
-        # Create a table to store representative cost components
+        # Create tables to store results
         self._representative_costs = pd.DataFrame(index=span_strings, columns=self._cost_component_names)
         self._representative_costs.index.name = 'Time span'
 
-        # Create a table to store variable changes
         self._variable_changes = pd.DataFrame(index=span_strings, columns=self._variables)
         self._variable_changes.index.name = 'Time span'
 
-        # Create a table to store cost change contributions
         col_names = ['Total','Sum_of_changes(vars)'] + self._cost_component_names + self._variables
         self._DeltaCost = pd.DataFrame(index=span_strings, columns=col_names)
         self._DeltaCost.index.name = 'Time span'
@@ -240,22 +272,21 @@ class CostModel:
             span_string = str(t1) + '-' + str(t2)
 
             # Compute total cost change in this time span
-            data = self._data
-            cost_change = data.loc[t2,'Total_cost'] - data.loc[t1,'Total_cost']
+            cost_change = mod_data.loc[t2,'Total_cost'] - mod_data.loc[t1,'Total_cost']
             self._DeltaCost.loc[span_string,'Total'] = cost_change
 
             # Compute representative value of cost components in this time span
-            for ccname in self._cost_component_names:
-                C1 = self._data.loc[t1,ccname]
-                C2 = self._data.loc[t2,ccname]
-                self._representative_costs.loc[span_string, ccname] = logmean(C1,C2)
-                self._DeltaCost.loc[span_string,ccname] = C2 - C1
+            for cc_name in self._cost_component_names:
+                C1 = mod_data.loc[t1,cc_name]
+                C2 = mod_data.loc[t2,cc_name]
+                self._representative_costs.loc[span_string, cc_name] = log_mean(C1,C2)
+                self._DeltaCost.loc[span_string,cc_name] = C2 - C1
 
             # Compute log changes to each equation variable during this span
-            for vname in self._symbols:
-                v1 = self._data.loc[t1,vname]
-                v2 = self._data.loc[t2,vname]
-                self._variable_changes.loc[span_string, vname] = np.log(v2/v1)
+            for var_name in self._symbols:
+                v1 = mod_data.loc[t1,var_name]
+                v2 = mod_data.loc[t2,var_name]
+                self._variable_changes.loc[span_string, var_name] = log_change(v1,v2)
                 
             # Compute the contribution of each variable to each cost component
             Cvec          = self._representative_costs.loc[span_string, self._cost_component_names]
@@ -263,7 +294,7 @@ class CostModel:
             Cdiag         = np.diag(Cvec)
             Dlog_var_diag = np.diag(Dlog_var_vec)
             D             = np.array(self._dependency_matrix)
-            DeltaC_matrix = Cdiag .dot(D) .dot(Dlog_var_diag)
+            DeltaC_matrix = Cdiag @ D @ Dlog_var_diag
             self._DeltaC_matrix_over_time = self._DeltaC_matrix_over_time + [DeltaC_matrix] #save results from this period
 
             # Compute the total contribution of each variable to total cost change
@@ -271,6 +302,26 @@ class CostModel:
 
             # Re-compute total cost change from the variable contributions as a check
             self._DeltaCost.loc[span_string, 'Sum_of_changes(vars)'] = self._DeltaCost.loc[span_string, self._symbols].sum()
+
+        # Finally, re-compute representative cost components and cost change contributions without replacing zero variables with tiny values
+        self._DeltaC_matrix_over_time = []
+        for span in time_spans:
+            t1 = span[0]
+            t2 = span[1]
+            span_string = str(t1) + '-' + str(t2)
+
+            # Compute representative value of cost components in this time span
+            for cc_name in self._cost_component_names:
+                C1 = self._data.loc[t1,cc_name]
+                C2 = self._data.loc[t2,cc_name]
+                self._representative_costs.loc[span_string, cc_name] = log_mean(C1,C2)
+                self._DeltaCost.loc[span_string,cc_name] = C2 - C1
+
+            # Compute log changes to each equation variable during this span
+            for var_name in self._symbols:
+                v1 = self._data.loc[t1,var_name]
+                v2 = self._data.loc[t2,var_name]
+                self._variable_changes.loc[span_string, var_name] = log_change(v1,v2)
 
     @property
     def data(self):
@@ -283,6 +334,7 @@ class CostModel:
     @property
     def variable_changes(self):
         return self._variable_changes.drop(columns=self._parameters)
+        #todo: modify this to display an Inf change for vars that changed from zero (even though internally the are handled differently)
     
     @property
     def cost_change_contributions(self):
