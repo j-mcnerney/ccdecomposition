@@ -5,7 +5,7 @@ from utils import unique, setdiff
 from typing import List
 
 # For debugging # todo: make this a snippet
-from pandas_utils import snoop
+from utilpandas import snoop
 snoop2 = lambda x,**kwargs: snoop(x,globals(),**kwargs)
 
 
@@ -196,6 +196,7 @@ class CostModel:
         self._data.index.name = 'Time period'
         self._data = self._compute_cost_components(self._data)
         self._n_timeperiods = data.shape[0]
+        # self._leverages = self._compute_leverages()
 
 
     def _replace_zero_var_values(self):
@@ -228,6 +229,11 @@ class CostModel:
             sharename = 'Share_' + cc_name
             mod_data[sharename] = mod_data[cc_name] / mod_data['Total_cost']
         return mod_data
+
+
+    # def _compute_leverages(self):
+
+
 
     def cost_change_decomposition(self, time_spans):
         """Compute cost change contributions over one more spans of time.
@@ -333,59 +339,183 @@ class CostModel:
     @property
     def variable_changes(self):
         return self._variable_changes.drop(columns=self._parameters)
-        #todo: modify this to display an Inf change for vars that changed from zero (even though internally the are handled differently)
     
     @property
     def cost_change_contributions(self):
         return self._DeltaCost.drop(columns=self._parameters)
     
 
-    def draw_dependencies(self):
+    def draw_dependencies(self, yr=None):
         import matplotlib.pyplot as plt
         import networkx as nx
 
+        group_sep = 1.1
+        label_pad = 0.13
+
+        # Construct an edge list for cost dependencies
         adj_matrix = pd.DataFrame(self._dependency_matrix, index=self._cost_component_names, columns=self._symbols)
         edge_list = (adj_matrix
             .apply(lambda s: s.mask(s==1, other=s.name), axis=1)
             .melt(var_name='source', value_name='target')
-            .query('target != 0'))
+            .query('source in @self._variables')
+            .query('target != 0')
+            )
         
         G = nx.Graph()
+        G.add_nodes_from(self._variables, group='variables')
         G.add_nodes_from(self._cost_component_names, group='cost_components')
-        G.add_nodes_from(self._symbols, group='symbols')
         G.add_edges_from(edge_list.values)
 
-        # self._cost_component_names + self._symbols
-        nodes = pd.DataFrame(index=[n for n in G.nodes], columns=['group', 'x_pos', 'y_pos'])
-
-        # Determine node locations
+        # Pre-compute properties of variable nodes
+        var_nodes = pd.DataFrame(index=self._variables,
+                                 columns=['group', 'x_pos', 'y_pos'])
         y_pos = 0
-        for n, attrDict in G.nodes(data=True):
+        for n in self._variables:
             y_pos += 1
-            nodes.loc[n,'group'] = attrDict['group']
-            nodes.loc[n,'x_pos'] = 0 if attrDict['group'] == 'symbols' else 1
-            nodes.loc[n,'y_pos'] = y_pos
+            var_nodes.loc[n,'group'] = 'variables'
+            var_nodes.loc[n,'x_pos'] = -group_sep/2
+            var_nodes.loc[n,'y_pos'] = y_pos
+            if yr == None:
+                var_nodes.loc[n,'node_size'] = 300*1.8
+            else:
+                var_nodes.loc[n,'node_size'] = 300*1.8
+        var_nodes['y_pos'] -= var_nodes['y_pos'].mean()
+        var_nodes['pos'] = list(zip(var_nodes.x_pos, var_nodes.y_pos))
 
-        # Center each group vertically by its mean vertical position
-        nodes['y_pos'] -= nodes.groupby('group')['y_pos'].transform('mean')
-        nodes['pos'] = list(zip(nodes.x_pos, nodes.y_pos))
+        # Pre-compute properties of cost component nodes
+        cc_nodes = pd.DataFrame(index=self._cost_component_names,
+                                columns=['group', 'x_pos', 'y_pos'])
+        y_pos = 0
+        for n in self._cost_component_names:
+            y_pos += 1
+            cc_nodes.loc[n,'group'] = 'cost_components'
+            cc_nodes.loc[n,'x_pos'] = +group_sep/2
+            cc_nodes.loc[n,'y_pos'] = y_pos
+            if yr == None:
+                cc_nodes.loc[n,'node_size'] = 300*1.3
+            else:
+                cc_nodes.loc[n,'node_size'] = self._data.loc[yr,'Share_'+n] * 300 * 2
+        cc_nodes['y_pos'] -= cc_nodes['y_pos'].mean()
+        cc_nodes['pos'] = list(zip(cc_nodes.x_pos, cc_nodes.y_pos))
 
-        # xnudge_label = -0.04
-        xnudge_label = nodes.group.replace(to_replace={'symbols':-0.04, 'cost_components':+0.04})
-        nodes['label_pos'] = list(zip(nodes.x_pos + xnudge_label, nodes.y_pos))
-        nodes['label'] = nodes.index
+        # Labels and label positions
+        var_nodes['label'] = var_nodes.index
+        cc_nodes['label'] = cc_nodes.index
+
+        var_nodes['label_pos'] = list(zip(var_nodes.x_pos - label_pad, var_nodes.y_pos))
+        cc_nodes['label_pos'] = list(zip(cc_nodes.x_pos + label_pad, cc_nodes.y_pos))
+
+        nodes = pd.concat([var_nodes, cc_nodes])
 
         # Draw
         fig = plt.figure(1)
         plt.clf()
-        nx.draw(G, pos=nodes.pos.to_dict())
 
-        # Symbol lables
-        symbol_nodes = nodes.query('group=="symbols"')
-        nx.draw_networkx_labels(G, pos=symbol_nodes.label_pos.to_dict(), horizontalalignment='right', labels=symbol_nodes.label.to_dict())
+        nx.draw_networkx_nodes(G, 
+                               pos=var_nodes.pos.to_dict(),
+                               nodelist={n for n in G.nodes if n in self._variables},
+                               node_shape='o',
+                               node_size=300*1.8,
+                               node_color='orange')
+        nx.draw_networkx_nodes(G, 
+                               pos=cc_nodes.pos.to_dict(),
+                               nodelist={n for n in G.nodes if n in self._cost_component_names},
+                               node_shape='s',
+                               node_size=cc_nodes.node_size,
+                               node_color='cornflowerblue')
+
+        nx.draw_networkx_edges(G, 
+                               pos=nodes.pos.to_dict(),
+                               width = 1.5,
+                               arrows = True,
+                               edge_color=(0.3,0.3,0.3),
+                               connectionstyle='arc,angleA=0,angleB=180,armA=25,armB=25,rad=30')
+
+        # Symbol labels
+        nx.draw_networkx_labels(G, 
+                                pos=var_nodes.label_pos.to_dict(), 
+                                labels=var_nodes.label.to_dict(),
+                                horizontalalignment='right',
+                                font_weight='normal',
+                                font_color='black',
+                                font_family='Work Sans')
 
         # Cost component labels
-        cc_nodes = nodes.query('group=="cost_components"')
-        nx.draw_networkx_labels(G, pos=cc_nodes.label_pos.to_dict(), horizontalalignment='left', labels=cc_nodes.label.to_dict())
+        nx.draw_networkx_labels(G, 
+                                pos=cc_nodes.label_pos.to_dict(), 
+                                labels=cc_nodes.label.to_dict(),
+                                horizontalalignment='left',
+                                font_weight='normal',
+                                font_color='black',
+                                font_family='Work Sans')
 
-        plt.xlim(-0.3, 1.3)
+        plt.xlim(-1.5, 1.5)
+
+
+
+if __name__ == '__main__':
+    import numpy as np
+    import pandas as pd
+    from ccdecomp import CostModel
+    pd.set_option('display.precision', 3)
+
+    # Initialize
+    cp = CostModel(
+        title = 'A made up cost model.',
+        equation = 'a1 * x1 x2+a2 * x3 *x4_cubed x2 * x1 + x5 + a3 a4 CF * x2'
+    )
+
+    # Rename cost components [optional]
+    cp.name_cost_components(['Materials','Labor','Equipment','O&M'])
+
+    # Specify which symbols are fixed parameters [optional]
+    cp.identify_parameters(['a1','a2','a3','a4'])
+
+    # Check that the cost model was correctly parsed
+    print('\n\nCost model summary:')
+    print(cp)
+
+    # Enter data
+    time = [1980, 1985, 1993]
+    data = pd.DataFrame(index=time)
+    data['a1'] = 1 * np.ones((len(time), 1))
+    data['a2'] = 2.5 * np.ones((len(time), 1))
+    data['a3'] = 10 * np.ones((len(time), 1))
+    data['a4'] = 0.03 * np.ones((len(time), 1))
+    data['x1'] = [1, 1, 1.2]
+    data['x2'] = [100, 120, 150]
+    data['x3'] = [0.5, 0.6, 0.55]
+    data['x4_cubed'] = [5, 5.2, 5.7]
+    data['x5']= [10, 80, 120]
+    data['CF'] = [30, 40, 41]
+
+    # Bind data to symbols
+    cp.bind_data(data)
+
+    # Verify that data was bound correctly.  Examine costs in each period.
+    print('\n\nOn binding the cost model to data, cost components are automatically computed:')
+    cp.data
+
+    # Specify desire time spans to study
+    time_spans = [
+        (1980, 1985),
+        (1985, 1993),
+        (1980, 1993)
+    ]
+
+    # Get change decomposition over these spans
+    cp.cost_change_decomposition(time_spans)
+
+    # Report results
+    print('\n\nAfter asking for change decompositions over particular time spans:')
+    cp.cost_change_contributions
+
+    # Show auxiliary quantities used in the computation (optional)
+    print('\n\nRepresentative values of cost components:')
+    cp.representative_costs
+
+    print('Log changes to variables:')
+    cp.variable_changes
+
+    # %matplotlib inline
+    cp.draw_dependencies(yr=1980)
