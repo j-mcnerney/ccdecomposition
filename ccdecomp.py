@@ -295,7 +295,7 @@ class CostModel:
             Dlog_var_diag = np.diag(Dlog_var_vec)
             D             = np.array(self._dependency_matrix)
             DeltaC_matrix = Cdiag @ D @ Dlog_var_diag
-            self._DeltaC_matrix_over_time = self._DeltaC_matrix_over_time + [DeltaC_matrix] #save results from this period
+            self._DeltaC_matrix_over_time += [DeltaC_matrix] #save results from this period
 
             # Compute the total contribution of each variable to total cost change
             self._DeltaCost.loc[span_string, self._symbols] = DeltaC_matrix.sum(axis=0)
@@ -304,7 +304,6 @@ class CostModel:
             self._DeltaCost.loc[span_string, 'Sum_of_changes(vars)'] = self._DeltaCost.loc[span_string, self._symbols].sum()
 
         # Finally, re-compute representative cost components and cost change contributions without replacing zero variables with tiny values
-        self._DeltaC_matrix_over_time = []
         for span in time_spans:
             t1 = span[0]
             t2 = span[1]
@@ -339,3 +338,54 @@ class CostModel:
     @property
     def cost_change_contributions(self):
         return self._DeltaCost.drop(columns=self._parameters)
+    
+
+    def draw_dependencies(self):
+        import matplotlib.pyplot as plt
+        import networkx as nx
+
+        adj_matrix = pd.DataFrame(self._dependency_matrix, index=self._cost_component_names, columns=self._symbols)
+        edge_list = (adj_matrix
+            .apply(lambda s: s.mask(s==1, other=s.name), axis=1)
+            .melt(var_name='source', value_name='target')
+            .query('target != 0'))
+        
+        G = nx.Graph()
+        G.add_nodes_from(self._cost_component_names, group='cost_components')
+        G.add_nodes_from(self._symbols, group='symbols')
+        G.add_edges_from(edge_list.values)
+
+        # self._cost_component_names + self._symbols
+        nodes = pd.DataFrame(index=[n for n in G.nodes], columns=['group', 'x_pos', 'y_pos'])
+
+        # Determine node locations
+        y_pos = 0
+        for n, attrDict in G.nodes(data=True):
+            y_pos += 1
+            nodes.loc[n,'group'] = attrDict['group']
+            nodes.loc[n,'x_pos'] = 0 if attrDict['group'] == 'symbols' else 1
+            nodes.loc[n,'y_pos'] = y_pos
+
+        # Center each group vertically by its mean vertical position
+        nodes['y_pos'] -= nodes.groupby('group')['y_pos'].transform('mean')
+        nodes['pos'] = list(zip(nodes.x_pos, nodes.y_pos))
+
+        # xnudge_label = -0.04
+        xnudge_label = nodes.group.replace(to_replace={'symbols':-0.04, 'cost_components':+0.04})
+        nodes['label_pos'] = list(zip(nodes.x_pos + xnudge_label, nodes.y_pos))
+        nodes['label'] = nodes.index
+
+        # Draw
+        fig = plt.figure(1)
+        plt.clf()
+        nx.draw(G, pos=nodes.pos.to_dict())
+
+        # Symbol lables
+        symbol_nodes = nodes.query('group=="symbols"')
+        nx.draw_networkx_labels(G, pos=symbol_nodes.label_pos.to_dict(), horizontalalignment='right', labels=symbol_nodes.label.to_dict())
+
+        # Cost component labels
+        cc_nodes = nodes.query('group=="cost_components"')
+        nx.draw_networkx_labels(G, pos=cc_nodes.label_pos.to_dict(), horizontalalignment='left', labels=cc_nodes.label.to_dict())
+
+        plt.xlim(-0.3, 1.3)
